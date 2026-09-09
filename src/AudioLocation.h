@@ -10,6 +10,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+#include <cstdint>
+
 #ifndef OPENSHOT_AUDIOLOCATION_H
 #define OPENSHOT_AUDIOLOCATION_H
 

@@ -292,7 +292,17 @@ if (ENABLE_MAGICK)
     target_compile_definitions(openshot PUBLIC USE_IMAGEMAGICK=1)
 
     # Link with ImageMagick library
-    target_link_libraries(openshot PUBLIC ImageMagick::Magick++)
+if(WIN32 AND ENABLE_MAGICK)
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(MAGICKWAND QUIET MagickWand)
+    pkg_check_modules(MAGICKCORE QUIET MagickCore)
+  endif()
+endif()
+
+    target_link_libraries(openshot PUBLIC ImageMagick::Magick++ ${MAGICKWAND_LIBRARIES} ${MAGICKCORE_LIBRARIES})
+    target_link_directories(openshot PUBLIC ${MAGICKWAND_LIBRARY_DIRS} ${MAGICKCORE_LIBRARY_DIRS})
+
 
     set(HAVE_IMAGEMAGICK TRUE CACHE BOOL "Building with ImageMagick support" FORCE)
     mark_as_advanced(HAVE_IMAGEMAGICK)

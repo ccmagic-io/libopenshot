@@ -1141,42 +1141,61 @@ AVStream *FFmpegWriter::add_audio_stream() {
 	c->channels = info.channels;
 #endif
 
-	// Set valid sample rate (or throw error)
-	if (codec->supported_samplerates) {
-		int i;
-		for (i = 0; codec->supported_samplerates[i] != 0; i++)
-			if (info.sample_rate == codec->supported_samplerates[i]) {
-				// Set the valid sample rate
-				c->sample_rate = info.sample_rate;
-				break;
-			}
-		if (codec->supported_samplerates[i] == 0)
-			throw InvalidSampleRate("An invalid sample rate was detected for this codec.", path);
-	} else
-		// Set sample rate
-		c->sample_rate = info.sample_rate;
+        // Set valid sample rate (or throw error)
+        {
+                const int *supported_samplerates = NULL;
+                int num_samplerates = 0;
+#if LIBAVCODEC_VERSION_MAJOR >= 61
+                avcodec_get_supported_config(NULL, codec, AV_CODEC_CONFIG_SAMPLE_RATE, 0,
+                                              (const void **)&supported_samplerates, &num_samplerates);
+#else
+                supported_samplerates = codec->supported_samplerates;
+                if (supported_samplerates)
+                        while (supported_samplerates[num_samplerates] != 0) num_samplerates++;
+#endif
+                if (supported_samplerates && num_samplerates > 0) {
+                        bool found = false;
+                        for (int i = 0; i < num_samplerates; i++)
+                                if (info.sample_rate == supported_samplerates[i]) {
+                                        c->sample_rate = info.sample_rate;
+                                        found = true;
+                                        break;
+                                }
+                        if (!found)
+                                throw InvalidSampleRate("An invalid sample rate was detected for this codec.", path);
+                } else
+                        c->sample_rate = info.sample_rate;
+        }
 
-	c->time_base = AVRational{1, c->sample_rate};
-	st->time_base = c->time_base;
-
-	uint64_t channel_layout = info.channel_layout;
+        uint64_t channel_layout = info.channel_layout;
 #if HAVE_CH_LAYOUT
-	// Set a valid number of channels (or throw error)
-	AVChannelLayout ch_layout;
-	av_channel_layout_from_mask(&ch_layout, info.channel_layout);
-	if (codec->ch_layouts) {
-		int i;
-		for (i = 0; av_channel_layout_check(&codec->ch_layouts[i]); i++)
-			if (av_channel_layout_compare(&ch_layout, &codec->ch_layouts[i])) {
-				// Set valid channel layout
-				av_channel_layout_copy(&c->ch_layout, &ch_layout);
-				break;
-			}
-		if (!av_channel_layout_check(&codec->ch_layouts[i]))
-			throw InvalidChannels("An invalid channel layout was detected (i.e. MONO / STEREO).", path);
-	} else
-		// Set valid channel layout
-		av_channel_layout_copy(&c->ch_layout, &ch_layout);
+        // Set a valid number of channels (or throw error)
+        AVChannelLayout ch_layout;
+        av_channel_layout_from_mask(&ch_layout, info.channel_layout);
+        {
+                const AVChannelLayout *codec_ch_layouts = NULL;
+                int num_ch_layouts = 0;
+#if LIBAVCODEC_VERSION_MAJOR >= 61
+                avcodec_get_supported_config(NULL, codec, AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0,
+                                              (const void **)&codec_ch_layouts, &num_ch_layouts);
+#else
+                codec_ch_layouts = codec->ch_layouts;
+                if (codec_ch_layouts)
+                        while (av_channel_layout_check(&codec_ch_layouts[num_ch_layouts])) num_ch_layouts++;
+#endif
+                if (codec_ch_layouts && num_ch_layouts > 0) {
+                        bool found = false;
+                        for (int i = 0; i < num_ch_layouts; i++)
+                                if (av_channel_layout_compare(&ch_layout, &codec_ch_layouts[i])) {
+                                        av_channel_layout_copy(&c->ch_layout, &ch_layout);
+                                        found = true;
+                                        break;
+                                }
+                        if (!found)
+                                throw InvalidChannels("An invalid channel layout was detected (i.e. MONO / STEREO).", path);
+                } else
+                        av_channel_layout_copy(&c->ch_layout, &ch_layout);
+        }
 #else
 	// Set a valid number of channels (or throw error)
 	if (codec->channel_layouts) {
@@ -1194,14 +1213,21 @@ AVStream *FFmpegWriter::add_audio_stream() {
 			c->channel_layout = channel_layout;
 #endif
 
-	// Choose a valid sample_fmt
-	if (codec->sample_fmts) {
-		for (int i = 0; codec->sample_fmts[i] != AV_SAMPLE_FMT_NONE; i++) {
-			// Set sample format to 1st valid format (and then exit loop)
-			c->sample_fmt = codec->sample_fmts[i];
-			break;
-		}
-	}
+        // Choose a valid sample_fmt
+        {
+                const enum AVSampleFormat *supported_sample_fmts = NULL;
+                int num_sample_fmts = 0;
+#if LIBAVCODEC_VERSION_MAJOR >= 61
+                avcodec_get_supported_config(NULL, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0,
+                                              (const void **)&supported_sample_fmts, &num_sample_fmts);
+#else
+                supported_sample_fmts = codec->sample_fmts;
+#endif
+                if (supported_sample_fmts && num_sample_fmts != 0 && supported_sample_fmts[0] != AV_SAMPLE_FMT_NONE) {
+                        c->sample_fmt = supported_sample_fmts[0];
+                }
+        }
+
 	if (c->sample_fmt == AV_SAMPLE_FMT_NONE) {
 		// Default if no sample formats found
 		c->sample_fmt = AV_SAMPLE_FMT_S16;
@@ -1400,14 +1426,21 @@ AVStream *FFmpegWriter::add_video_stream() {
 		c->flags |= CODEC_FLAG_GLOBAL_HEADER;
 #endif
 
-	// Find all supported pixel formats for this codec
-	const PixelFormat *supported_pixel_formats = codec->pix_fmts;
-	while (supported_pixel_formats != NULL && *supported_pixel_formats != PIX_FMT_NONE) {
-		// Assign the 1st valid pixel format (if one is missing)
-		if (c->pix_fmt == PIX_FMT_NONE)
-			c->pix_fmt = *supported_pixel_formats;
-		++supported_pixel_formats;
-	}
+        // Find all supported pixel formats for this codec
+        {
+                const PixelFormat *supported_pixel_formats = NULL;
+                int num_pixel_formats = 0;
+#if LIBAVCODEC_VERSION_MAJOR >= 61
+                avcodec_get_supported_config(NULL, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0,
+                                              (const void **)&supported_pixel_formats, &num_pixel_formats);
+#else
+                supported_pixel_formats = codec->pix_fmts;
+#endif
+                if (c->pix_fmt == PIX_FMT_NONE && supported_pixel_formats != NULL &&
+                    supported_pixel_formats[0] != PIX_FMT_NONE) {
+                        c->pix_fmt = supported_pixel_formats[0];
+                }
+        }
 
 	// Codec doesn't have any pix formats?
 	if (c->pix_fmt == PIX_FMT_NONE) {
