@@ -15,6 +15,7 @@
 #ifndef OPENSHOT_AUDIOLOCATION_H
 #define OPENSHOT_AUDIOLOCATION_H
 
+#include <cstdint>
 
 namespace openshot
 {
